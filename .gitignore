@@ -1,0 +1,13 @@
+# Files
+chromedriver.exe
+cookie.txt
+cookies.txt
+
+# Extensions
+*.log
+*.pyc
+
+# Folders
+download
+.idea
+.vscode
