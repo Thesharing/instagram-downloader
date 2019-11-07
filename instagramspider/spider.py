@@ -114,7 +114,7 @@ class InstagramSpider:
                         break
                     except Exception as e:
                         self.logger.error(e)
-                media_type = MediaType.video if 'video' in r.headers['Content-Type'] else MediaType.photo
+                media_type = MediaType.video if 'video' in r.headers['Content-Type'] else MediaType.image
                 with open(self.path.generate(user_name=username, media_type=media_type), 'wb') as f:
                     f.write(r.content)
             self.db.insert({'link': link})
