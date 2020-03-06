@@ -6,7 +6,7 @@ if __name__ == '__main__':
     # 1. Get cookie from instagram.com after you logged in
     cookies = CookieReader.from_local_file('./cookie.txt')
     # 2. Use MongoDB to save links
-    db = MongoDB('instagram', primary_search_key='link')
+    db = MongoDB('instagram', primary_key='link')
     db.check_connection()
     # 3. Declare the spider, you need to specify:
     # the location of chromedriver, the cookies, the proxies (if necessary),

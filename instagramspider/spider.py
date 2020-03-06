@@ -6,7 +6,7 @@ from typing import Union
 import requestium
 from bs4 import BeautifulSoup as Soup
 
-from spiderutil.connector import MongoDB
+from spiderutil.connector import Database, MongoDB
 from spiderutil.path import PathGenerator, StoreByUserName
 from spiderutil.log import Log
 from spiderutil.typing import MediaType
@@ -16,16 +16,29 @@ class InstagramSpider:
 
     def __init__(self, driver_path,
                  cookies: dict,
-                 db: MongoDB,
+                 db: Database = None,
                  path: Union[PathGenerator, str] = None,
                  proxies: dict = None,
                  timeout: int = 15,
+                 no_window: bool = False,
                  logger=None):
+
+        options = {
+            'arguments': [
+                '--headless',
+                '--window-size=1920,1080'
+            ]
+        } if no_window else {
+            'arguments': [
+                '--start-maximized'
+            ]
+        }
 
         # https://chromedriver.chromium.org/downloads
         self.session = requestium.Session(webdriver_path=driver_path,
                                           browser='chrome',
-                                          default_timeout=timeout)
+                                          default_timeout=timeout,
+                                          webdriver_options=options)
 
         for key, value in cookies.items():
             self.session.driver.ensure_add_cookie({
@@ -40,7 +53,7 @@ class InstagramSpider:
         }
         self.session.default_timeout = timeout
 
-        self.db = db
+        self.db = MongoDB('instagram', primary_key='link') if db is None else db
 
         if path is None:
             self.path = StoreByUserName('./download')
@@ -51,7 +64,8 @@ class InstagramSpider:
 
         self.pattern = {
             'content': re.compile(r'("display_url"|"display_src"|"video_url"):"(.+?)"'),
-            'username': re.compile(r'"owner":({.+?})'),
+            'owner': re.compile(r'"owner":({.+?})'),
+            'username': re.compile(r'"username":"(.+?)"')
         }
 
         self.logger = Log.create_logger('InstagramSpider', './instagram.log') if logger is None else logger
@@ -106,7 +120,8 @@ class InstagramSpider:
                 img_link = item[1].replace('\\u0026', '&').replace('\\', '')
                 if img_link not in contents:
                     contents.append(img_link)
-            username = json.loads(self.pattern['username'].findall(page)[-1])['username']
+            owner_str = self.pattern['owner'].findall(page)[-1]
+            username = self.pattern['username'].findall(owner_str)[-1]
             for content in contents:
                 while True:
                     try:
