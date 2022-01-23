@@ -5,10 +5,9 @@ from typing import Union
 
 import requestium
 from bs4 import BeautifulSoup as Soup
-
 from spiderutil.connector import Database, MongoDB
-from spiderutil.path import PathGenerator, StoreByUserName
 from spiderutil.log import Log
+from spiderutil.path import PathGenerator, StoreByUserName
 from spiderutil.typing import MediaType
 
 
@@ -63,9 +62,9 @@ class InstagramSpider:
             self.path = path
 
         self.pattern = {
-            'content': re.compile(r'("display_url"|"display_src"|"video_url"):"(.+?)"'),
-            'owner': re.compile(r'"owner":({.+?})'),
-            'username': re.compile(r'"username":"(.+?)"')
+            'prefix': re.compile(r'<script type="text/javascript">window.__additionalDataLoaded\('),
+            'start': re.compile(r'{"items":'),
+            'suffix': re.compile(r'\);</script><script type="text/javascript">')
         }
 
         self.logger = Log.create_logger('InstagramSpider', './instagram.log') if logger is None else logger
@@ -113,29 +112,73 @@ class InstagramSpider:
                 self.logger.error(e)
         soup = Soup(r.text, 'lxml')
         try:
-            page = soup.find('body').text
-            res = self.pattern['content'].findall(page)
-            contents = []
-            for item in res:
-                img_link = item[1].replace('\\u0026', '&').replace('\\', '')
-                if img_link not in contents:
-                    contents.append(img_link)
-            owner_str = self.pattern['owner'].findall(page)[-1]
-            username = self.pattern['username'].findall(owner_str)[-1]
-            for content in contents:
-                while True:
-                    try:
-                        r = self.session.get(content)
-                        break
-                    except Exception as e:
-                        self.logger.error(e)
-                media_type = MediaType.video if 'video' in r.headers['Content-Type'] else MediaType.image
-                with open(self.path.generate(user_name=username, media_type=media_type), 'wb') as f:
-                    f.write(r.content)
+            page = str(soup.find('body'))
+
+            # Extract json content from the page
+            prefix_match = self.pattern['prefix'].search(page)
+            stripped_str = page[prefix_match.end():]
+            start_match = self.pattern['start'].search(stripped_str)
+            suffix_match = self.pattern['suffix'].search(stripped_str)
+            content = stripped_str[start_match.start():suffix_match.start()]
+
+            total_count = 0
+
+            for data in json.loads(content)['items']:
+
+                # Get username
+                contents = []
+                user_name = data['user']['username']
+                media_type = data['media_type']
+
+                if media_type == 8:
+                    if 'carousel_media' in data:
+                        count = 0
+                        for item in data['carousel_media']:
+                            count += 1
+                            if 'video_versions' in item:
+                                # Here we assume that the first one is the original one
+                                contents.append((item['video_versions'][0]['url'], MediaType.video))
+                            elif 'image_versions2' in item:
+                                contents.append((item['image_versions2']['candidates'][0]['url'], MediaType.image))
+                            else:
+                                raise ValueError('No available content found in carousel media.')
+                        if 'carousel_media_count' not in data or data['carousel_media_count'] != count:
+                            raise ValueError('The count of media is not equal, expected: {}, actual: {}'.format(
+                                data['carousel_media_count'], count))
+                    else:
+                        raise ValueError('No available content found in carousel media.')
+                elif media_type == 2:
+                    if 'video_versions' in data:
+                        contents.append((data['video_versions'][0]['url'], MediaType.video))
+                    else:
+                        raise ValueError('No available video found in media type 2.')
+                elif media_type == 1:
+                    if 'image_versions2' in data:
+                        contents.append((data['image_versions2']['candidates'][0]['url'], MediaType.image))
+                    else:
+                        raise ValueError('No available image found in media type 1.')
+                else:
+                    raise ValueError('Unknown media type: {}'.format(media_type))
+
+                for content in contents:
+                    self._download_content(content[0], user_name, content[1])
+
+                total_count += len(contents)
+
             self.db.insert({'link': link})
-            return len(contents)
+            return total_count
         except IndexError as e:
             self.logger.error(e)
+
+    def _download_content(self, url, user_name, media_type):
+        while True:
+            try:
+                r = self.session.get(url)
+                break
+            except Exception as e:
+                self.logger.error(e)
+        with open(self.path.generate(user_name=user_name, media_type=media_type), 'wb') as f:
+            f.write(r.content)
 
     def quit(self):
         self.session.driver.quit()
